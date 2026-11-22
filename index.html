@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kitchen Equipment Designer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      font: 14px Arial, sans-serif;
+      color: #eaf0f6;
+      background: #111820;
+    }
+    header {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      background: #19232d;
+      border-bottom: 1px solid #2c3945;
+    }
+    header strong { font-size: 17px; }
+    button, select, input {
+      color: #eaf0f6;
+      background: #202c37;
+      border: 1px solid #3a4a58;
+      border-radius: 6px;
+      padding: 8px;
+    }
+    button { cursor: pointer; }
+    button:hover { background: #2c3d4c; }
+    .layout {
+      height: calc(100vh - 58px);
+      display: grid;
+      grid-template-columns: 270px 1fr 250px;
+    }
+    aside {
+      overflow: auto;
+      padding: 16px;
+      background: #17212a;
+    }
+    aside:first-child { border-right: 1px solid #2c3945; }
+    aside:last-child { border-left: 1px solid #2c3945; }
+    h2 { font-size: 14px; margin: 4px 0 12px; }
+    .section { margin-bottom: 22px; }
+    .field {
+      display: grid;
+      grid-template-columns: 1fr 95px;
+      align-items: center;
+      gap: 8px;
+      margin: 9px 0;
+      color: #bdc9d3;
+    }
+    input { width: 95px; }
+    select { width: 100%; }
+    .wide { width: 100%; margin: 4px 0; }
+    #viewport { position: relative; min-width: 0; }
+    #viewport canvas { display: block; }
+    .hint {
+      position: absolute;
+      left: 14px;
+      bottom: 12px;
+      color: #b7c2cc;
+      background: #17212add;
+      padding: 9px 12px;
+      border-radius: 6px;
+      pointer-events: none;
+    }
+    .status { color: #8fa3b3; font-size: 12px; line-height: 1.5; }
+    .divider { border: 0; border-top: 1px solid #2c3945; margin: 14px 0; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 220px 1fr; }
+      aside:last-child { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Kitchen Equipment Designer</strong>
+    <div>
+      <button id="resetView">Reset View</button>
+      <button id="saveImage">Export Image</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="section">
+        <h2>Equipment</h2>
+        <select id="equipment">
+          <option value="sauce">Sauce Fridge</option>
+          <option value="meat">Meat Display Fridge</option>
+          <option value="prep">Sandwich / Pizza Prep Table</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <h2>Overall Dimensions (mm)</h2>
+        <label class="field">Width <input id="width" type="number" min="100" step="10"></label>
+        <label class="field">Height <input id="height" type="number" min="100" step="10"></label>
+        <label class="field">Depth <input id="depth" type="number" min="100" step="10"></label>
+        <button class="wide" id="applyDimensions">Apply Dimensions</button>
+      </div>
+
+      <div class="section">
+        <h2>Parts</h2>
+        <button class="wide" id="addShelf">+ Add Shelf</button>
+        <button class="wide" id="addTray">+ Add Tray</button>
+        <button class="wide" id="removePart">Remove Selected Part</button>
+      </div>
+
+      <hr class="divider">
+      <p class="status">Prototype controls: click a part to select it, then drag it. Use the mouse wheel to zoom and drag the background to orbit.</p>
+    </aside>
+
+    <main id="viewport">
+      <div class="hint">Drag to orbit · Scroll to zoom · Drag a part to move it</div>
+    </main>
+
+    <aside>
+      <div class="section">
+        <h2>Selected Part</h2>
+        <p id="selection" class="status">No part selected</p>
+        <label class="field">Height position <input id="partY" type="number" step="10"></label>
+        <button class="wide" id="applyPosition">Apply Position</button>
+      </div>
+      <hr class="divider">
+      <p class="status">Dimensions are shown in millimeters. This visual prototype is not a manufacturing drawing.</p>
+    </aside>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+
+    const presets = {
+      sauce: { width: 1200, height: 1800, depth: 700, shelves: 4, color: 0xdce6eb },
+      meat:  { width: 900, height: 1360, depth: 680, shelves: 3, color: 0xd8e0e5 },
+      prep:  { width: 2400, height: 1300, depth: 900, shelves: 2, color: 0xb9c7cc }
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111820);
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 1, 10000);
+    camera.position.set(2400, 1900, 2800);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.querySelector("#viewport").appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x41505c, 2));
+    const light = new THREE.DirectionalLight(0xffffff, 2.2);
+    light.position.set(1500, 2500, 1800);
+    scene.add(light);
+
+    const grid = new THREE.GridHelper(5000, 50, 0x52616d, 0x29343d);
+    scene.add(grid);
+
+    const machine = new THREE.Group();
+    scene.add(machine);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let parts = [];
+    let selected = null;
+    let dragging = false;
+    let dragOffset = new THREE.Vector3();
+    let dimensions = { ...presets.sauce };
+
+    const material = (color, opacity = 1) => new THREE.MeshStandardMaterial({
+      color, roughness: 0.55, metalness: 0.12,
+      transparent: opacity < 1, opacity,
+      side: THREE.DoubleSide
+    });
+
+    function makeBox(w, h, d, x, y, z, color, name, opacity = 1) {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        material(color, opacity)
+      );
+      mesh.position.set(x, y, z);
+      mesh.userData.partName = name;
+      machine.add(mesh);
+      parts.push(mesh);
+      return mesh;
+    }
+
+    function clearMachine() {
+      while (machine.children.length) {
+        const child = machine.children.pop();
+        child.geometry?.dispose();
+        if (child.material) child.material.dispose();
+      }
+      parts = [];
+      selected = null;
+      updateSelection();
+    }
+
+    function build() {
+      clearMachine();
+      const { width: w, height: h, depth: d, color } = dimensions;
+      const wall = Math.max(25, Math.min(w, h, d) * 0.035);
+      const isPrep = document.querySelector("#equipment").value === "prep";
+
+      // Outer cabinet and inner cavity are represented with simple panels.
+      makeBox(w, wall, d, 0, wall / 2, 0, color, "Base");
+      makeBox(w, wall, d, 0, h - wall / 2, 0, color, "Top");
+      makeBox(wall, h, d, -w / 2 + wall / 2, h / 2, 0, color, "Left side");
+      makeBox(wall, h, d, w / 2 - wall / 2, h / 2, 0, color, "Right side");
+      makeBox(w, h, wall, 0, h / 2, -d / 2 + wall / 2, color, "Back");
+
+      if (isPrep) {
+        // Worktop
+        makeBox(w, wall * 1.4, d, 0, h - wall * 0.7, 0, 0x9aa9ad, "Worktop");
+        // Ingredient pans
+        const trayCount = Math.max(3, Math.floor(w / 350));
+        const trayW = Math.min(176, (w - 100) / trayCount);
+        for (let i = 0; i < trayCount; i++) {
+          makeBox(trayW, 100, Math.min(159, d * 0.28),
+            -w / 2 + (i + 0.5) * (w / trayCount),
+            h - wall * 1.4 - 50,
+            -d * 0.2, 0xb9cbd0, "Ingredient tray", 0.8);
+        }
+      } else {
+        const count = dimensions.shelves || 3;
+        for (let i = 1; i <= count; i++) {
+          const y = wall + (h - wall * 2) * i / (count + 1);
+          makeBox(w - wall * 2, 18, d - wall * 2, 0, y, 0, 0xb8c8ce, "Shelf", 0.88);
+        }
+      }
+      fitCamera();
+    }
+
+    function fitCamera() {
+      const max = Math.max(dimensions.width, dimensions.height, dimensions.depth);
+      camera.position.set(max * 1.25, max * 0.95, max * 1.5);
+      controls.target.set(0, dimensions.height / 2, 0);
+      camera.near = 1;
+      camera.far = max * 20;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function resize() {
+      const host = document.querySelector("#viewport");
+      const w = host.clientWidth, h = host.clientHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function setPreset(key) {
+      dimensions = { ...presets[key] };
+      document.querySelector("#width").value = dimensions.width;
+      document.querySelector("#height").value = dimensions.height;
+      document.querySelector("#depth").value = dimensions.depth;
+      build();
+    }
+    document.querySelector("#equipment").addEventListener("change", e => setPreset(e.target.value));
+    setPreset("sauce");
+
+    document.querySelector("#applyDimensions").addEventListener("click", () => {
+      dimensions.width = Math.max(100, Number(document.querySelector("#width").value) || 100);
+      dimensions.height = Math.max(100, Number(document.querySelector("#height").value) || 100);
+      dimensions.depth = Math.max(100, Number(document.querySelector("#depth").value) || 100);
+      build();
+    });
+
+    document.querySelector("#addShelf").addEventListener("click", () => {
+      const y = dimensions.height * 0.55;
+      makeBox(dimensions.width * 0.88, 18, dimensions.depth * 0.88, 0, y, 0, 0x48b4e8, "Shelf");
+    });
+
+    document.querySelector("#addTray").addEventListener("click", () => {
+      makeBox(300, 100, 260, 0, dimensions.height * 0.7, 0, 0x48b4e8, "Tray", 0.85);
+    });
+
+    function updateSelection() {
+      document.querySelector("#selection").textContent =
+        selected ? selected.userData.partName : "No part selected";
+      document.querySelector("#partY").value = selected ? Math.round(selected.position.y) : "";
+      parts.forEach(p => p.material.emissive?.set(p === selected ? 0x17435a : 0x000000));
+    }
+
+    document.querySelector("#applyPosition").addEventListener("click", () => {
+      if (!selected) return;
+      selected.position.y = Number(document.querySelector("#partY").value) || 0;
+      updateSelection();
+    });
+
+    document.querySelector("#removePart").addEventListener("click", () => {
+      if (!selected) return;
+      machine.remove(selected);
+      parts = parts.filter(p => p !== selected);
+      selected.geometry.dispose();
+      selected.material.dispose();
+      selected = null;
+      updateSelection();
+    });
+
+    function hitTest(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      return raycaster.intersectObjects(parts, false)[0];
+    }
+
+    renderer.domElement.addEventListener("pointerdown", event => {
+      const hit = hitTest(event);
+      if (!hit) return;
+      selected = hit.object;
+      dragging = true;
+      controls.enabled = false;
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -selected.position.z);
+      const point = new THREE.Vector3();
+      raycaster.ray.intersectPlane(plane, point);
+      dragOffset.copy(selected.position).sub(point);
+      updateSelection();
+    });
+
+    renderer.domElement.addEventListener("pointermove", event => {
+      if (!dragging || !selected) return;
+      hitTest(event);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -selected.position.z);
+      const point = new THREE.Vector3();
+      if (raycaster.ray.intersectPlane(plane, point)) {
+        selected.position.x = point.x + dragOffset.x;
+        selected.position.y = Math.max(0, point.y + dragOffset.y);
+        updateSelection();
+      }
+    });
+
+    window.addEventListener("pointerup", () => {
+      dragging = false;
+      controls.enabled = true;
+    });
+
+    document.querySelector("#resetView").addEventListener("click", fitCamera);
+    document.querySelector("#saveImage").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.download = "equipment-design.png";
+      a.href = renderer.domElement.toDataURL("image/png");
+      a.click();
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
